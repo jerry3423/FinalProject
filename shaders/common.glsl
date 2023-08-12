@@ -25,7 +25,8 @@
 #ifndef RAYCOMMON_GLSL
 #define RAYCOMMON_GLSL
 
-
+#include "host_device.h"
+const float InvalidPdf = -1.0;
 //-----------------------------------------------------------------------
 // Debugging
 //-----------------------------------------------------------------------
@@ -110,6 +111,36 @@ vec3 OffsetRay(in vec3 p, in vec3 n)
   return vec3(abs(p.x) < origin ? p.x + floatScale * n.x : p_i.x,  //
               abs(p.y) < origin ? p.y + floatScale * n.y : p_i.y,  //
               abs(p.z) < origin ? p.z + floatScale * n.z : p_i.z);
+}
+
+uint hash8bit(uint a) {
+  return (a ^ (a >> 8)) << 24;
+}
+
+vec2 toConcentricDisk(vec2 r) {
+    float rx = sqrt(r.x);
+    float theta = r.y * 2.0 * M_PI;
+    return vec2(cos(theta), sin(theta)) * rx;
+}
+
+bool hasNan(vec3 v) {
+    return isnan(v.x) || isnan(v.y) || isnan(v.z);
+}
+
+bool inBound(ivec2 p, ivec2 pMin, ivec2 pMax) {
+    return p.x >= pMin.x && p.x < pMax.x && p.y >= pMin.y && p.y < pMax.y;
+}
+
+bool inBound(ivec2 p, ivec2 bound) {
+    return inBound(p, ivec2(0, 0), bound);
+}
+
+vec3 HDRToLDR(vec3 color) {
+    return color / (color + 1.0);
+}
+
+vec3 LDRToHDR(vec3 color) {
+    return color / (1.01 - color);
 }
 
 #endif  // RAYCOMMON_GLSL

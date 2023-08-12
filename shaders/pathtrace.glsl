@@ -34,25 +34,23 @@
 #include "punctual.glsl"
 #include "env_sampling.glsl"
 #include "shade_state.glsl"
+#include "reservoir.glsl"
+#include "pbr_metallicworkflow.glsl"
+
+float dummyPdf;
 
 //-----------------------------------------------------------------------
 //-----------------------------------------------------------------------
 vec3 Eval(in State state, in vec3 V, in vec3 N, in vec3 L, inout float pdf)
 {
-  if(rtxState.pbrMode == 0)
     return DisneyEval(state, V, N, L, pdf);
-  else
-    return PbrEval(state, V, N, L, pdf);
 }
 
 //-----------------------------------------------------------------------
 //-----------------------------------------------------------------------
 vec3 Sample(in State state, in vec3 V, in vec3 N, inout vec3 L, inout float pdf, inout RngStateType seed)
 {
-  if(rtxState.pbrMode == 0)
     return DisneySample(state, V, N, L, pdf, seed);
-  else
-    return PbrSample(state, V, N, L, pdf, seed);
 }
 
 
@@ -90,6 +88,8 @@ struct VisibilityContribution
   vec3  lightDir;   // Direction to the light, to shoot shadow ray
   float lightDist;  // Distance to the light (1e32 for infinite or sky)
   bool  visible;    // true if in front of the face and should shoot shadow ray
+  float lightpdf;
+  vec3 lightcontrib;
 };
 
 //-----------------------------------------------------------------------
@@ -183,6 +183,9 @@ VisibilityContribution DirectLight(in Ray r, in State state)
     contrib.lightDist = lightDist;
     contrib.radiance  = Li;
   }
+
+  contrib.lightpdf = lightPdf;
+  contrib.lightcontrib = lightContrib;
 
   return contrib;
 }
@@ -384,4 +387,90 @@ vec3 samplePixel(ivec2 imageCoords, ivec2 sizeImage)
   }
 
   return radiance;
+}
+
+void loadLastGeometryInfo(ivec2 imageCoords, out vec3 normal, out float depth) {
+    uvec2 gInfo = imageLoad(lastGbuffer, imageCoords).xy;
+    normal = decompress_unit_vec(gInfo.y);
+    depth = uintBitsToFloat(gInfo.x);
+}
+
+void loadLastGeometryInfo(ivec2 imageCoords, out vec3 normal, out float depth, out uint matHash) {
+    uvec4 gInfo = imageLoad(lastGbuffer, imageCoords);
+    normal = decompress_unit_vec(gInfo.y);
+    depth = uintBitsToFloat(gInfo.x);
+    matHash = gInfo.w & 0xFF000000;
+}
+
+void loadThisGeometryInfo(ivec2 imageCoords, out vec3 normal, out float depth) {
+    uvec2 gInfo = imageLoad(thisGbuffer, imageCoords).xy;
+    normal = decompress_unit_vec(gInfo.y);
+    depth = uintBitsToFloat(gInfo.x);
+}
+
+void loadThisGeometryInfo(ivec2 imageCoords, out vec3 normal, out float depth, out uint matHash) {
+    uvec4 gInfo = imageLoad(thisGbuffer, imageCoords);
+    normal = decompress_unit_vec(gInfo.y);
+    depth = uintBitsToFloat(gInfo.x);
+    matHash = gInfo.w & 0xFF000000;
+}
+
+vec3 EnvRadiance(vec3 dir) {
+    if (_sunAndSky.in_use == 1)
+        return sun_and_sky(_sunAndSky, dir) * rtxState.hdrMultiplier;
+    else {
+        vec2 uv = GetSphericalUv(dir);
+        return texture(environmentTexture, uv).rgb * rtxState.hdrMultiplier;
+    }
+}
+
+vec3 RemoveFF(vec3 radiance) {
+    float lum = luminance(radiance);
+    if (lum > rtxState.fireflyClampThreshold) {
+        radiance *= rtxState.fireflyClampThreshold / lum;
+    }
+    return radiance;
+}
+
+Ray GenRay(ivec2 coord, ivec2 sizeImage) {
+    // Compute sampling position between [-1 .. 1]
+    const vec2 pixelCenter = vec2(coord) + 0.5;
+    const vec2 inUV = pixelCenter / vec2(sizeImage.xy);
+    vec2 d = inUV * 2.0 - 1.0;
+    // Compute ray origin and direction
+    vec4 origin = sceneCamera.viewInverse * vec4(0, 0, 0, 1);
+    vec4 target = sceneCamera.projInverse * vec4(d.x, d.y, 1, 1);
+    vec4 direction = sceneCamera.viewInverse * vec4(normalize(target.xyz), 0);
+
+    return Ray(origin.xyz, normalize(direction.xyz));
+}
+
+bool IsPdfInvalid(float p) {
+    return p <= 1e-8 || isnan(p);
+}
+
+bool Occlusion(Ray ray, State state, float dist) {
+    return AnyHit(ray, dist - abs(ray.origin.x - state.position.x) -
+        abs(ray.origin.y - state.position.y) -
+        abs(ray.origin.z - state.position.z));
+}
+
+bool getIndirectStateFromGBuffer(uimage2D gBuffer, Ray ray, out State state, out float depth, ivec2 imageCoords) {
+    uvec4 gInfo = imageLoad(gBuffer, imageCoords * 2);
+    depth = uintBitsToFloat(gInfo.x);
+    if (depth >= INFINITY * 0.8)
+        return false;
+    state.position = ray.origin + ray.direction * depth;
+    state.normal = decompress_unit_vec(gInfo.y);
+    state.ffnormal = dot(state.normal, ray.direction) <= 0.0 ? state.normal : -state.normal;
+
+    // Filling material structures
+    state.mat.albedo = unpackUnorm4x8(gInfo.w).xyz;
+    vec4 matInfo = unpackUnorm4x8(gInfo.z);
+    state.mat.metallic = matInfo.x;
+    state.mat.roughness = matInfo.y;
+    state.mat.ior = matInfo.z * 3.f + 1.f;
+    state.mat.transmission = matInfo.w;
+    state.matID = gInfo.w >> 24; // hashed matarial id
+    return true;
 }

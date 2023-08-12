@@ -36,13 +36,11 @@ public:
                                   uint32_t                 familyIndex,
                                   nvvk::ResourceAllocator* allocator)              = 0;
   virtual void              destroy()                                              = 0;
-  virtual void              run(const VkCommandBuffer&              cmdBuf,
-                                const VkExtent2D&                   size,
-                                nvvk::ProfilerVK&                   profiler,
-                                const std::vector<VkDescriptorSet>& extraDescSets) = 0;
-  virtual void              create(const VkExtent2D& size, const std::vector<VkDescriptorSetLayout>& extraDescSetsLayout, Scene* _scene = nullptr) = 0;
+  virtual void              run(const VkCommandBuffer& cmdBuf, const RtxState& state, nvvk::ProfilerVK& profiler, std::vector<VkDescriptorSet> descSets, int frames) = 0;
+  virtual void              create(const VkExtent2D& size, std::vector<VkDescriptorSetLayout> extraDescSetsLayout, Scene* _scene = nullptr) = 0;
   virtual const std::string name() = 0;
   void                      setPushContants(const RtxState& state) { m_state = state; }
+  virtual void update(const VkExtent2D& size) = 0;
 
 
   RtxState m_state{};

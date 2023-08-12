@@ -71,12 +71,8 @@ void SampleExample::setup(const VkInstance&               instance,
   m_skydome.setup(device, physicalDevice, queues[eTransfer].familyIndex, &m_alloc);
 
   // Create and setup all renderers
-  m_pRender[eRtxPipeline] = new RtxPipeline;
-  m_pRender[eRayQuery]    = new RayQuery;
-  for(auto r : m_pRender)
-  {
-    r->setup(m_device, physicalDevice, queues[eTransfer].familyIndex, &m_alloc);
-  }
+  m_pRender.reset(new RayQuery);
+  m_pRender->setup(m_device, physicalDevice, queues[eTransfer].familyIndex, &m_alloc);
 }
 
 
@@ -91,6 +87,7 @@ void SampleExample::loadScene(const std::string& filename)
 
   // The picker is the helper to return information from a ray hit under the mouse cursor
   m_picker.setTlas(m_accelStruct.getTlas());
+  m_start_time = std::chrono::steady_clock::now();
   resetFrame();
 }
 
@@ -115,6 +112,8 @@ void SampleExample::loadEnvironmentHdr(const std::string& hdrFilename)
 //
 void SampleExample::loadAssets(const char* filename)
 {
+  m_totalFrames = -1;
+  //m_rtxState.time = 0;
   std::string sfile = filename;
 
   // Need to stop current rendering
@@ -137,11 +136,12 @@ void SampleExample::loadAssets(const char* filename)
       // Loading the scene might have loaded new textures, which is changing the number of elements
       // in the DescriptorSetLayout. Therefore, the PipelineLayout will be out-of-date and need
       // to be re-created. If they are re-created, the pipeline also need to be re-created.
-      for(auto& r : m_pRender)
-        r->destroy();
-
-      m_pRender[m_rndMethod]->create(
-          m_size, {m_accelStruct.getDescLayout(), m_offscreen.getDescLayout(), m_scene.getDescLayout(), m_descSetLayout}, &m_scene);
+      if (m_pRender) {
+          vkDeviceWaitIdle(m_device);
+          m_pRender->destroy();
+      }
+      m_pRender->create(
+          m_size, { m_accelStruct.getDescLayout(), m_offscreen.getDescLayout(), m_scene.getDescLayout(), m_descSetLayout }, &m_scene);
     }
 
     if(extension == ".hdr")  //|| extension == ".exr")
@@ -193,6 +193,7 @@ void SampleExample::updateFrame()
 
   if(m_rtxState.frame < m_maxFrames)
     m_rtxState.frame++;
+    m_totalFrames++;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -276,12 +277,8 @@ void SampleExample::destroyResources()
   m_skydome.destroy();
   m_axis.deinit();
 
-  // All renderers
-  for(auto p : m_pRender)
-  {
-    p->destroy();
-    p = nullptr;
-  }
+  m_pRender->destroy();
+  m_pRender = nullptr;
 
   // Memory
   m_alloc.deinit();
@@ -293,6 +290,7 @@ void SampleExample::destroyResources()
 void SampleExample::onResize(int /*w*/, int /*h*/)
 {
   m_offscreen.update(m_size);
+  m_pRender->update(m_size);
   resetFrame();
 }
 
@@ -318,19 +316,14 @@ void SampleExample::renderGui(nvvk::ProfilerVK& profiler)
 // - Destroy the previous one.
 void SampleExample::createRender(RndMethod method)
 {
-  if(method == m_rndMethod)
-    return;
+    if (m_pRender) {
+        vkDeviceWaitIdle(m_device);  // cannot destroy while in use
+        m_pRender->destroy();
+    }
 
-  LOGI("Switching renderer, from %d to %d \n", m_rndMethod, method);
-  if(m_rndMethod != eNone)
-  {
-    vkDeviceWaitIdle(m_device);  // cannot destroy while in use
-    m_pRender[m_rndMethod]->destroy();
-  }
-  m_rndMethod = method;
+    m_rndMethod = method;
 
-  m_pRender[m_rndMethod]->create(
-      m_size, {m_accelStruct.getDescLayout(), m_offscreen.getDescLayout(), m_scene.getDescLayout(), m_descSetLayout}, &m_scene);
+    m_pRender->create(m_size, { m_accelStruct.getDescLayout(), m_offscreen.getDescLayout(), m_scene.getDescLayout(), m_descSetLayout }, &m_scene);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -374,7 +367,7 @@ void SampleExample::drawPost(VkCommandBuffer cmdBuf)
 
   m_offscreen.m_tonemapper.zoom           = m_descaling ? 1.0f / m_descalingLevel : 1.0f;
   m_offscreen.m_tonemapper.renderingRatio = size / area;
-  m_offscreen.run(cmdBuf);
+  m_offscreen.run(cmdBuf, m_rtxState, m_totalFrames);
 
   if(m_showAxis)
     m_axis.display(cmdBuf, CameraManip.getMatrix(), m_size);
@@ -410,11 +403,10 @@ void SampleExample::renderScene(const VkCommandBuffer& cmdBuf, nvvk::ProfilerVK&
     render_size = VkExtent2D{render_size.width / m_descalingLevel, render_size.height / m_descalingLevel};
 
   m_rtxState.size = {render_size.width, render_size.height};
+  m_rtxState.time = (uint)(std::chrono::duration<double>(std::chrono::steady_clock::now() - m_start_time).count() * 1000.0);
   // State is the push constant structure
-  m_pRender[m_rndMethod]->setPushContants(m_rtxState);
-  // Running the renderer
-  m_pRender[m_rndMethod]->run(cmdBuf, render_size, profiler,
-                              {m_accelStruct.getDescSet(), m_offscreen.getDescSet(), m_scene.getDescSet(), m_descSet});
+  m_pRender->run(cmdBuf, m_rtxState, profiler,
+      { m_accelStruct.getDescSet(), m_offscreen.getDescSet(m_totalFrames), m_scene.getDescSet(), m_descSet }, m_totalFrames);
 
 
   // For automatic brightness tonemapping

@@ -41,8 +41,8 @@ static void onErrorCallback(int error, const char* description)
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-static int const SAMPLE_WIDTH  = 1280;
-static int const SAMPLE_HEIGHT = 720;
+static int const SAMPLE_WIDTH  = 1920;
+static int const SAMPLE_HEIGHT = 1080;
 
 //--------------------------------------------------------------------------------------------------
 // Application Entry
@@ -181,7 +181,7 @@ int main(int argc, char** argv)
     sample.loadScene(nvh::findFile(sceneFile, defaultSearchPaths, true));
     sample.createUniformBuffer();
     sample.createDescriptorSetLayout();
-    sample.createRender(SampleExample::eRtxPipeline);
+    sample.createRender(SampleExample::eRayQuery);
     sample.resetFrame();
     sample.m_busy = false;
   }).detach();

@@ -36,12 +36,16 @@
 layout(location = 0) in vec2 uvCoords;
 layout(location = 0) out vec4 fragColor;
 
-layout(set = 0, binding = 0) uniform sampler2D inImage;
+layout(set = 0, binding = 0) uniform sampler2D inDirectImage;
+layout(set = 0, binding = 1) uniform sampler2D inIndirectImage;
 
-layout(push_constant) uniform _Tonemapper
+layout(push_constant) uniform _PushConstant
 {
   Tonemapper tm;
+  int debugging_mode;
 };
+
+vec2 indCoord;
 
 // http://www.thetenthplanet.de/archives/5367
 // Apply dithering to hide banding artifacts.
@@ -79,14 +83,24 @@ vec3 toneLocalExposure(vec3 RGB, float logAvgLum)
   float scale[7] = float[7](1, 2, 4, 8, 16, 32, 64);
   for(int i = 0; i < 7; ++i)
   {
-    float v1 = luminance(texture(inImage, uvCoords * tm.zoom, i).rgb) * factor;
-    float v2 = luminance(texture(inImage, uvCoords * tm.zoom, i + 1).rgb) * factor;
-    if(abs(v1 - v2) / ((tm.key * pow(2, phi) / (scale[i] * scale[i])) + v1) > epsilon)
-    {
+    float v1;
+    if(debugging_mode == eDirectStage)
+      v1 = luminance(texture(inDirectImage, uvCoords * tm.zoom, i).rgb) * factor;
+    else if(debugging_mode == eIndirectStage)
+      v1 = luminance(texture(inIndirectImage, indCoord * tm.zoom, i).rgb) * factor;
+    else
+      v1 = luminance(texture(inDirectImage, uvCoords * tm.zoom, i).rgb + texture(inIndirectImage, indCoord * tm.zoom, i).rgb) * factor;
+    float v2;
+    if(debugging_mode == eDirectStage)
+      v2 = luminance(texture(inDirectImage, uvCoords * tm.zoom, i + 1).rgb) * factor;
+    else if(debugging_mode == eIndirectStage)
+      v2 = luminance(texture(inIndirectImage, indCoord * tm.zoom, i + 1).rgb) * factor;
+    else
+      v2 == luminance(texture(inDirectImage, uvCoords * tm.zoom, i + 1).rgb + texture(inIndirectImage, indCoord * tm.zoom, i + 1).rgb) * factor;
+    if(abs(v1 - v2) / ((tm.key * pow(2, phi) / (scale[i] * scale[i])) + v1) > epsilon) {
       La = v1;
       break;
-    }
-    else
+    } else
       La = v2;
   }
   float Yd = Y / (1.0 + La);
@@ -97,22 +111,51 @@ vec3 toneLocalExposure(vec3 RGB, float logAvgLum)
 
 void main()
 {
-  // Raw result of ray tracing
-  vec4 hdr = texture(inImage, uvCoords * tm.zoom).rgba;
+  indCoord = uvCoords;
 
-  if(((tm.autoExposure >> 0) & 1) == 1)
-  {
-    vec4  avg     = textureLod(inImage, vec2(0.5), 20);  // Get the average value of the image
-    float avgLum2 = luminance(avg.rgb);                  // Find the luminance
-    if(((tm.autoExposure >> 1) & 1) == 1)
-      hdr.rgb = toneLocalExposure(hdr.rgb, avgLum2);  // Adjust exposure
-    else
-      hdr.rgb = toneExposure(hdr.rgb, avgLum2);  // Adjust exposure
+  if(debugging_mode < eDirectStage && debugging_mode > eNoDebug) {
+    vec3 color = texture(inDirectImage, indCoord * tm.zoom).xyz;
+    if (debugging_mode == eBaseColor)
+      color = clamp(pow(color, vec3(0.45454545454545)), 0, 1);
+    fragColor = vec4(color, 1.0);
   }
+  else {
+    // Raw result of ray tracing
+    vec4 hdr;
+    if(debugging_mode == eDirectStage) {
+      hdr = texture(inDirectImage, uvCoords * tm.zoom).rgba;
+    }
+    else if(debugging_mode == eIndirectStage) {
+      hdr = texture(inIndirectImage, indCoord * tm.zoom).rgba;
+    }
+    else {
+      hdr = texture(inDirectImage, uvCoords * tm.zoom).rgba + texture(inIndirectImage, indCoord * tm.zoom).rgba;
+    }
 
+    hdr.w = 1.0;
+    if(((tm.autoExposure >> 0) & 1) == 1) {
+      vec4 avg; // Get the average value of the image
+      if(debugging_mode == eDirectStage) {
+        avg = textureLod(inDirectImage, vec2(0.5), 20);
+      }
+      else if(debugging_mode == eIndirectStage) {
+        avg = textureLod(inIndirectImage, vec2(0.5), 20);
+      }
+      else {
+        avg = (textureLod(inDirectImage, vec2(0.5), 20) + textureLod(inIndirectImage, vec2(0.5), 20));
+      }
+      avg.w = 1.0;
+      float avgLum2 = luminance(avg.rgb);                  // Find the luminance
+      if(((tm.autoExposure >> 1) & 1) == 1) {
+        hdr.rgb = toneLocalExposure(hdr.rgb, avgLum2);  // Adjust exposure
+      }
+      else {
+        hdr.rgb = toneExposure(hdr.rgb, avgLum2);  // Adjust exposure
+      }
+    }
 
-  // Tonemap + Linear to sRgb
-  vec3 color = toneMap(hdr.rgb, tm.avgLum);
+    // Tonemap + Linear to sRgb
+    vec3 color = toneMap(hdr.rgb, tm.avgLum);
 
   // Remove banding
   uvec3 r = pcg3d(uvec3(gl_FragCoord.xy, 0));
@@ -132,4 +175,5 @@ void main()
 
   fragColor.xyz = color;
   fragColor.a   = hdr.a;
+  }
 }

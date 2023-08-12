@@ -648,12 +648,16 @@ void Scene::updateCamera(const VkCommandBuffer& cmdBuf, float aspectRatio)
 {
   const auto& view     = CameraManip.getMatrix();
   const auto  proj     = nvmath::perspectiveVK(CameraManip.getFov(), aspectRatio, 0.001f, 100000.0f);
+  m_camera.lastProjView = m_camera.projView;
+  m_camera.lastView = nvmath::invert(m_camera.viewInverse);
   m_camera.viewInverse = nvmath::invert(view);
   m_camera.projInverse = nvmath::invert(proj);
+  m_camera.projView = proj * view;
 
   // Focal is the interest point
   nvmath::vec3f eye, center, up;
   CameraManip.getLookat(eye, center, up);
+  m_camera.lastPosition = eye;
   m_camera.focalDist = nvmath::length(center - eye);
 
   // UBO on the device

@@ -35,10 +35,12 @@
 
 // clang-format off
 layout(set = S_ACCEL, binding = eTlas)					uniform accelerationStructureEXT topLevelAS;
-//
-layout(set = S_OUT,   binding = eLastDirect)			uniform image2D			lastDirectImage;
 
-layout(set = S_OUT,   binding = eThisDirect)			uniform image2D			ThisDirectImage;
+layout(set = S_OUT,   binding = eResult)	    uniform image2D	resultImage;
+//
+
+layout(set = S_OUT,   binding = eDirectResult)      uniform image2D DirectResultImage;
+layout(set = S_OUT,   binding = eIndirectResult)    uniform image2D IndirectResultImage;
 
 
 //
@@ -54,6 +56,20 @@ layout(set = S_ENV, binding = eImpSamples,  scalar)		buffer _EnvAccel		{ EnvAcce
 //
 layout(set = S_RTX, binding = eLastGbuffer)             uniform uimage2D lastGbuffer;
 layout(set = S_RTX, binding = eThisGbuffer)             uniform uimage2D thisGbuffer;
+layout(set = S_RTX, binding = eMotionVector)            uniform iimage2D motionVector;
+
+layout(set = S_RTX, binding = eLastDirectResv, scalar) buffer _LastDirectResv { DirectReservoir lastDirectResv[]; };
+layout(set = S_RTX, binding = eThisDirectResv, scalar) buffer _ThisDirectResv { DirectReservoir thisDirectResv[]; };
+layout(set = S_RTX, binding = eTempDirectResv, scalar) buffer _TempDirectResv { DirectReservoir tempDirectResv[]; };
+
+layout(set = S_RTX, binding = eLastIndirectResv, scalar) buffer _LastIndirectResv { IndirectReservoir lastIndirectResv[]; };
+layout(set = S_RTX, binding = eThisIndirectResv, scalar) buffer _ThisIndirectResv { IndirectReservoir thisIndirectResv[]; };
+layout(set = S_RTX, binding = eTempIndirectResv, scalar) buffer _TempIndirectResv { IndirectReservoir tempIndirectResv[]; };
+
+layout(set = S_RTX, binding = eDenoiseDirTempA) uniform image2D denoiseDirTempA;
+layout(set = S_RTX, binding = eDenoiseDirTempB) uniform image2D denoiseDirTempB;
+layout(set = S_RTX, binding = eDenoiseIndTempA) uniform image2D denoiseIndTempA;
+layout(set = S_RTX, binding = eDenoiseIndTempB) uniform image2D denoiseIndTempB;
 
 layout(buffer_reference, scalar) buffer Vertices { VertexAttributes v[]; };
 layout(buffer_reference, scalar) buffer Indices	 { uvec3 i[];            };

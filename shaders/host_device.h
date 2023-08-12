@@ -26,6 +26,10 @@
 #ifndef COMMON_HOST_DEVICE
 #define COMMON_HOST_DEVICE
 
+const int BlockSizeX = 8;
+const int BlockSizeY = 8;
+
+#define CEIL_DIV(x, y) (x + y - 1) / y
 
 #ifdef __cplusplus
 #include <stdint.h>
@@ -52,11 +56,13 @@ using uint  = unsigned int;
 
 // Sets
 START_ENUM(SetBindings)
-  S_ACCEL = 0,  // Acceleration structure
-  S_OUT   = 1,  // Offscreen output image
-  S_SCENE = 2,  // Scene data
-  S_ENV   = 3,  // Environment / Sun & Sky
-  S_WF    = 4   // Wavefront extra data
+S_ACCEL = 0,  // Acceleration structure
+S_OUT   = 1,  // Offscreen output image
+S_SCENE = 2,  // Scene data
+S_ENV   = 3,  // Environment / Sun & Sky
+S_RTX   = 4,
+S_WF    = 5,  // Wavefront extra data
+S_Denoise = 6
 END_ENUM();
 
 // Acceleration Structure - Set 0
@@ -66,17 +72,20 @@ END_ENUM();
 
 // Output image - Set 1
 START_ENUM(OutputBindings)
-  eSampler = 0,  // As sampler
-  eStore   = 1   // As storage
+eDirectSampler = 0,   // As sampler
+eIndirectSampler = 1, // As sampler
+eDirectResult = 2,    // As storage
+eIndirectResult = 3,  // As storage
+eResult = 4
 END_ENUM();
 
 // Scene Data - Set 2
 START_ENUM(SceneBindings)
-  eCamera    = 0, 
-  eMaterials = 1, 
-  eInstData  = 2, 
-  eLights    = 3,            
-  eTextures  = 4  // must be last elem            
+eCamera    = 0, 
+eMaterials = 1, 
+eInstData  = 2, 
+eLights    = 3,            
+eTextures  = 4  // must be last elem            
 END_ENUM();
 
 // Environment - Set 3
@@ -84,6 +93,23 @@ START_ENUM(EnvBindings)
   eSunSky     = 0, 
   eHdr        = 1, 
   eImpSamples = 2 
+END_ENUM();
+
+// Ray Query - Set 4
+START_ENUM(RayQBindings)
+eLastGbuffer = 0,
+eThisGbuffer = 1,
+eLastDirectResv = 2,
+eThisDirectResv = 3,
+eTempDirectResv = 4,
+eLastIndirectResv = 5,
+eThisIndirectResv = 6,
+eTempIndirectResv = 7,
+eMotionVector = 8,
+eDenoiseDirTempA = 9,
+eDenoiseDirTempB = 10,
+eDenoiseIndTempA = 11,
+eDenoiseIndTempB = 12
 END_ENUM();
 
 START_ENUM(DebugMode)
@@ -99,10 +125,18 @@ START_ENUM(DebugMode)
   eRadiance  = 9,   //
   eWeight    = 10,  //
   eRayDir    = 11,  //
-  eHeatmap   = 12   //
+  eHeatmap   = 12,  //
+  eDirectStage = 13, //
+  eIndirectStage = 14 //
 END_ENUM();
 // clang-format on
 
+START_ENUM(ReSTIRState)
+eNone = 0,
+eSpatial = 1,
+eTemporal = 2,
+eSpatiotemporal = 3
+END_ENUM();
 
 // Camera of the scene
 struct SceneCamera
@@ -111,6 +145,10 @@ struct SceneCamera
   mat4  projInverse;
   float focalDist;
   float aperture;
+  mat4 projView;
+  mat4 lastView;
+  mat4 lastProjView;
+  vec3 lastPosition;
   // Extra
   int nbLights;
 };
@@ -200,6 +238,22 @@ struct RtxState
   ivec2 size;                   // rendering size
   int   minHeatmap;             // Debug mode - heat map
   int   maxHeatmap;
+
+  uint time;
+
+  int ReSTIRState;              // Different part of ReSTIR
+  int reservoirClamp;
+
+  int denoise;                  // Enable Denoiser
+  int denoiseLevel;             // Default denoise level
+
+  float sigLuminDirect;
+  float sigNormalDirect;
+  float sigDepthDirect;
+
+  float sigLuminIndirect;
+  float sigNormalIndirect;
+  float sigDepthIndirect;
 };
 
 // Structure used for retrieving the primitive information in the closest hit
@@ -236,6 +290,36 @@ struct Light
   vec2 padding;
 };
 
+//ReSTIR
+struct LightSample
+{
+	vec3 Li;     // Light randiance
+	vec3 wi;     // Light direction
+	float dist;  // Distance between light and visiable point
+};
+
+struct GISample
+{
+	vec3 xv, nv;  // Visiable point and surface normal
+	vec3 xs, ns;  // Sample point and surface normal
+	vec3 L;       // Outgoing randiance
+	float pHat;
+};
+
+struct DirectReservoir {
+	LightSample lightSample;
+	uint num;                 // Numbers of direct reservoir
+	float weight;
+};
+
+struct IndirectReservoir {
+	GISample giSample;
+	uint num;                 // Numbers of direct reservoir
+	float weight;
+	float bias;
+};
+
+
 // Environment acceleration structure - computed in hdr_sampling
 struct EnvAccel
 {
@@ -258,6 +342,7 @@ struct Tonemapper
   int   autoExposure;
   float Ywhite;  // Burning white
   float key;     // Log-average luminance
+  int pad;
 };
 
 

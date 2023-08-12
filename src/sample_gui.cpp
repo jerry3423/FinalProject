@@ -135,45 +135,6 @@ bool SampleGUI::guiRayTracing()
   changed |= GuiH::Selection("Pbr Mode", "PBR material model", &rtxState.pbrMode, nullptr, Normal, {"Disney", "Gltf"});
 
   static bool bAnyHit = true;
-  if(_se->m_rndMethod == SampleExample::RndMethod::eRtxPipeline)
-  {
-    if(GuiH::Checkbox("Enable AnyHit", "AnyHit is used for double sided, cutout opacity, but can be slower when all objects are opaque",
-                      &bAnyHit, nullptr))
-    {
-      auto rtx = dynamic_cast<RtxPipeline*>(_se->m_pRender[_se->m_rndMethod]);
-      vkDeviceWaitIdle(_se->m_device);  // cannot run while changing this
-      rtx->useAnyHit(bAnyHit);
-      changed = true;
-    }
-  }
-
-  GuiH::Group<bool>("Debugging", false, [&] {
-    changed |= GuiH::Selection("Debug Mode", "Display unique values of material", &rtxState.debugging_mode, nullptr, Normal,
-                               {
-                                   "No Debug",
-                                   "BaseColor",
-                                   "Normal",
-                                   "Metallic",
-                                   "Emissive",
-                                   "Alpha",
-                                   "Roughness",
-                                   "TexCoord",
-                                   "Tangent",
-                                   "Radiance",
-                                   "Weight",
-                                   "RayDir",
-                                   "HeatMap",
-                               });
-
-    if(rtxState.debugging_mode == eHeatmap)
-    {
-      changed |= GuiH::Drag("Min Heat map", "Minimum timing value, below this value it will be blue",
-                            &rtxState.minHeatmap, nullptr, Normal, 0, 1'000'000, 100);
-      changed |= GuiH::Drag("Max Heat map", "Maximum timing value, above this value it will be red",
-                            &rtxState.maxHeatmap, nullptr, Normal, 0, 1'000'000, 100);
-    }
-    return changed;
-  });
 
   if(_se->m_supportRayQuery)
   {
@@ -186,6 +147,47 @@ bool SampleGUI::guiRayTracing()
       changed = true;
     }
   }
+
+  changed |= GuiH::Selection("Debug Mode", "Display unique values of material", &rtxState.debugging_mode, nullptr, Normal,
+      {
+          "No Debug",
+          "BaseColor",
+          "Normal",
+          "Metallic",
+          "Emissive",
+          "Alpha",
+          "Roughness",
+          "TexCoord",
+          "Tangent",
+          "Radiance",
+          "Weight",
+          "RayDir",
+          "HeatMap",
+          "Direct Light",
+          "Indirect Light"
+      });
+
+  if (rtxState.debugging_mode == eHeatmap)
+  {
+      changed |= GuiH::Drag("Min Heat map", "Minimum timing value, below this value it will be blue",
+          &rtxState.minHeatmap, nullptr, Normal, 0, 1'000'000, 100);
+      changed |= GuiH::Drag("Max Heat map", "Maximum timing value, above this value it will be red",
+          &rtxState.maxHeatmap, nullptr, Normal, 0, 1'000'000, 100);
+  }
+
+  changed |= GuiH::Selection("ReSTIR State", "choose part of ReSTIR", &rtxState.ReSTIRState, nullptr, Normal,
+      {
+          "No Debug",
+          "Spatial",
+          "Temporal",
+          "Spatiotemporal"
+      });
+
+  changed |= GuiH::Slider("Reservoir Clamp", "", &rtxState.reservoirClamp, nullptr, Normal, 1, 1000);
+
+  bool denoise = rtxState.denoise;
+  changed |= GuiH::Checkbox("Denoiser", "", &denoise);
+  rtxState.denoise = denoise;
 
   GuiH::Info("Frame", "", std::to_string(rtxState.frame), GuiH::Flags::Disabled);
   return changed;
@@ -529,8 +531,6 @@ void SampleGUI::titleBar()
       o << " | " << g_nvml.getSysInfo().driverVersion;
     }
 #endif
-    if(_se->m_rndMethod != SampleExample::eNone && _se->m_pRender[_se->m_rndMethod] != nullptr)
-      o << " | " << _se->m_pRender[_se->m_rndMethod]->name();
     glfwSetWindowTitle(_se->m_window, o.str().c_str());
     dirtyTimer = 0;
   }

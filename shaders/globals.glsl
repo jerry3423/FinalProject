@@ -119,9 +119,11 @@ struct State
 
   uint     matID;
   Material mat;
+
+  float area;
 };
 
-
+const uint InvalidMatId = 0xff000000u;
 //-----------------------------------------------------------------------
 struct BsdfSampleRec
 {

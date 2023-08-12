@@ -1,0 +1,43 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_EXT_nonuniform_qualifier : enable
+#extension GL_EXT_scalar_block_layout : enable
+#extension GL_EXT_ray_tracing : enable
+#extension GL_EXT_ray_query : enable
+#extension GL_ARB_shader_clock : enable
+#extension GL_EXT_shader_image_load_formatted : enable
+#extension GL_ARB_shading_language_420pack : enable
+#extension GL_GOOGLE_include_directive : enable
+
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_buffer_reference2 : require
+
+#include "layouts.glsl"
+layout(local_size_x = BlockSizeX, local_size_y = BlockSizeY) in;
+
+layout(push_constant) uniform _RtxState{
+    RtxState rtxState;
+};
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= rtxState.size.x || coord.y >= rtxState.size.y) {
+        return;
+    }
+    vec3 albedo = unpackUnorm4x8(imageLoad(thisGbuffer, coord).w).rgb;
+    vec3 direct;
+    vec3 indirect;
+    if(rtxState.denoise==1){
+        direct = imageLoad(DirectResultImage, coord).rgb * albedo;
+        indirect = imageLoad(denoiseIndTempB, coord / 2).rgb * albedo;
+    }
+    else{
+        direct = imageLoad(DirectResultImage, coord).rgb;
+        indirect = imageLoad(denoiseIndTempA, coord / 2).rgb;
+    }
+
+    //vec3 indirect = ((rtxState.denoise == 1) ? imageLoad(denoiseIndTempB, coord / 2) : imageLoad(denoiseIndTempA, coord / 2)).rgb * albedo;
+
+    imageStore(DirectResultImage, coord, vec4(direct, 1.0));
+    imageStore(IndirectResultImage, coord, vec4(indirect, 1.0));
+}

@@ -133,8 +133,8 @@ public:
   bool m_supportRayQuery{true};
 
   // All renderers
-  std::array<Renderer*, eNone> m_pRender{nullptr, nullptr};
-  RndMethod                    m_rndMethod{eNone};
+  std::unique_ptr<Renderer> m_pRender;
+  RndMethod m_rndMethod{eNone};
 
   nvvk::Buffer m_sunAndSkyBuffer;
 
@@ -161,16 +161,32 @@ public:
 
   RtxState m_rtxState{
       0,       // frame;
-      10,      // maxDepth;
+      5,       // maxDepth;
       1,       // maxSamples;
       1,       // fireflyClampThreshold;
       1,       // hdrMultiplier;
-      0,       // debugging_mode;
+      0,      // debugging_mode;
       0,       // pbrMode;
       0,       // _pad0;
       {0, 0},  // size;
       0,       // minHeatmap;
-      65000    // maxHeatmap;
+      65000,   // maxHeatmap;
+
+      0,
+
+      3,       // ReSTIRState
+      20,      // clamp
+
+      0,       // Enable denoise
+      0,       // Default denoise level
+
+      0.4f,
+      0.1f,
+      0.02f,
+
+      4.f,
+      0.4f,
+      1.f,
   };
 
   SunAndSky m_sunAndSky{
@@ -197,8 +213,10 @@ public:
   bool        m_descaling{false};
   int         m_descalingLevel{1};
   bool        m_busy{false};
+  int         m_totalFrames{ -1 };
   std::string m_busyReasonText;
 
 
   std::shared_ptr<SampleGUI> m_gui;
+  std::chrono::steady_clock::time_point m_start_time;
 };
