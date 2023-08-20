@@ -132,7 +132,6 @@ void main()
       hdr = texture(inDirectImage, uvCoords * tm.zoom).rgba + texture(inIndirectImage, indCoord * tm.zoom).rgba;
     }
 
-    hdr.w = 1.0;
     if(((tm.autoExposure >> 0) & 1) == 1) {
       vec4 avg; // Get the average value of the image
       if(debugging_mode == eDirectStage) {

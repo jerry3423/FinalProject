@@ -39,9 +39,6 @@
 #include "autogen/pathtrace.comp.h"
 #include "autogen/direct.comp.h"
 #include "autogen/indirect.comp.h"
-#include "autogen/denoiseDirect.comp.h"
-#include "autogen/denoiseIndirect.comp.h"
-#include "autogen/compose.comp.h"
 //--------------------------------------------------------------------------------------------------
 //
 //
@@ -62,8 +59,6 @@ void RayQuery::destroy()
 		m_pAlloc->destroy(m_gbuffer[i]);
 		m_pAlloc->destroy(m_directReservoir[i]);
 		m_pAlloc->destroy(m_indirectReservoir[i]);
-		m_pAlloc->destroy(m_denoiseTempBuf[i]);
-		m_pAlloc->destroy(m_denoiseTempBuf[i + 2]);
 	}
 	m_pAlloc->destroy(m_directTempResv);
 	m_pAlloc->destroy(m_indirectTempResv);
@@ -76,12 +71,6 @@ void RayQuery::destroy()
 	m_directPipeline = VK_NULL_HANDLE;
 	vkDestroyPipeline(m_device, m_indirectPipeline, nullptr);
 	m_indirectPipeline = VK_NULL_HANDLE;
-	vkDestroyPipeline(m_device, m_denoiseDirectPipeline, nullptr);
-	m_denoiseDirectPipeline = VK_NULL_HANDLE;
-	vkDestroyPipeline(m_device, m_denoiseIndirectPipeline, nullptr);
-	m_denoiseIndirectPipeline = VK_NULL_HANDLE;
-	vkDestroyPipeline(m_device, m_composePipeline, nullptr);
-	m_composePipeline = VK_NULL_HANDLE;
 	vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
 
 }
@@ -128,21 +117,6 @@ void RayQuery::create(const VkExtent2D& size, std::vector<VkDescriptorSetLayout>
 	m_debug.setObjectName(m_indirectPipeline, "IndirectPipeline");
 	vkDestroyShaderModule(m_device, computePipelineCreateInfo.stage.module, nullptr);
 
-	computePipelineCreateInfo.stage.module = nvvk::createShaderModule(m_device, denoiseDirect_comp, sizeof(denoiseDirect_comp));
-	vkCreateComputePipelines(m_device, {}, 1, &computePipelineCreateInfo, nullptr, &m_denoiseDirectPipeline);
-	m_debug.setObjectName(m_denoiseDirectPipeline, "denoiseDirectPipeline");
-	vkDestroyShaderModule(m_device, computePipelineCreateInfo.stage.module, nullptr);
-
-	computePipelineCreateInfo.stage.module = nvvk::createShaderModule(m_device, denoiseIndirect_comp, sizeof(denoiseIndirect_comp));
-	vkCreateComputePipelines(m_device, {}, 1, &computePipelineCreateInfo, nullptr, &m_denoiseIndirectPipeline);
-	m_debug.setObjectName(m_denoiseIndirectPipeline, "denoiseIndirectPipeline");
-	vkDestroyShaderModule(m_device, computePipelineCreateInfo.stage.module, nullptr);
-
-	computePipelineCreateInfo.stage.module = nvvk::createShaderModule(m_device, compose_comp, sizeof(compose_comp));
-	vkCreateComputePipelines(m_device, {}, 1, &computePipelineCreateInfo, nullptr, &m_composePipeline);
-	m_debug.setObjectName(m_composePipeline, "composePipeline");
-	vkDestroyShaderModule(m_device, computePipelineCreateInfo.stage.module, nullptr);
-
 	timer.print();
 }
 
@@ -166,33 +140,9 @@ void RayQuery::run(const VkCommandBuffer& cmdBuf, const RtxState& state, nvvk::P
 	vkCmdDispatch(cmdBuf, CEIL_DIV(state.size[0], BlockSizeX), CEIL_DIV(state.size[1], BlockSizeY), 1);
 
 	//Compute indirect
-	ivec2 indSize = state.size / 2;
+	ivec2 indSize = state.size;
 	vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, m_indirectPipeline);
 	vkCmdDispatch(cmdBuf, CEIL_DIV(indSize[0], BlockSizeX), CEIL_DIV(indSize[1], BlockSizeY), 1);
-
-	//Direct and indirect denoise stage
-	vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, m_denoiseDirectPipeline);
-	if (state.denoise > 0) {
-		for (int i = 0; i < 4; i++) {
-			cState.denoiseLevel = i;
-			vkCmdPushConstants(cmdBuf, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtxState), &cState);
-			vkCmdDispatch(cmdBuf, CEIL_DIV(state.size[0], BlockSizeX), CEIL_DIV(state.size[1], BlockSizeY), 1);
-		}
-
-	}
-
-	vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, m_denoiseIndirectPipeline);
-	if (state.denoise > 0) {
-		for (int i = 0; i < 5; i++) {
-			cState.denoiseLevel = i;
-			vkCmdPushConstants(cmdBuf, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(RtxState), &cState);
-			vkCmdDispatch(cmdBuf, CEIL_DIV(indSize[0], BlockSizeX), CEIL_DIV(indSize[1], BlockSizeY), 1);
-		}
-	}
-
-	//Compose stage
-	vkCmdBindPipeline(cmdBuf, VK_PIPELINE_BIND_POINT_COMPUTE, m_composePipeline);
-	vkCmdDispatch(cmdBuf, CEIL_DIV(state.size[0], BlockSizeX), CEIL_DIV(state.size[1], BlockSizeY), 1);
 }
 
 void RayQuery::update(const VkExtent2D& size)
@@ -202,8 +152,6 @@ void RayQuery::update(const VkExtent2D& size)
 		m_pAlloc->destroy(m_gbuffer[i]);
 		m_pAlloc->destroy(m_directReservoir[i]);
 		m_pAlloc->destroy(m_indirectReservoir[i]);
-		m_pAlloc->destroy(m_denoiseTempBuf[i]);
-		m_pAlloc->destroy(m_denoiseTempBuf[i + 2]);
 	}
 	m_pAlloc->destroy(m_directTempResv);
 	m_pAlloc->destroy(m_indirectTempResv);
@@ -217,7 +165,7 @@ void RayQuery::update(const VkExtent2D& size)
 void RayQuery::createBuffer()
 {
 	VkDeviceSize directSize = m_size.width * m_size.height * sizeof(DirectReservoir);
-	VkDeviceSize indirectSize = (m_size.width / 2) * (m_size.height / 2) * sizeof(IndirectReservoir);
+	VkDeviceSize indirectSize = (m_size.width) * (m_size.height) * sizeof(IndirectReservoir);
 	for (int i = 0; i < 2; i++) {
 		m_directReservoir[i] = m_pAlloc->createBuffer(directSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
 		m_indirectReservoir[i] = m_pAlloc->createBuffer(indirectSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -254,26 +202,6 @@ void RayQuery::createImage()
 		VkImageViewCreateInfo mvivInfo = nvvk::makeImageViewCreateInfo(motionVecImg.image, motionVecCreateInfo);
 		m_motionVector = m_pAlloc->createTexture(motionVecImg, mvivInfo);
 		m_motionVector.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-		auto denoiseBufInfo = nvvk::makeImage2DCreateInfo(m_size, m_denoiseTempFormat,
-			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT, false);
-		nvvk::Image denoiseDirImageA = m_pAlloc->createImage(denoiseBufInfo);
-		nvvk::Image denoiseDirImageB = m_pAlloc->createImage(denoiseBufInfo);
-		nvvk::Image denoiseDirImageC = m_pAlloc->createImage(denoiseBufInfo);
-		nvvk::Image denoiseDirImageD = m_pAlloc->createImage(denoiseBufInfo);
-		VkImageViewCreateInfo divInfo1 = nvvk::makeImageViewCreateInfo(denoiseDirImageA.image, denoiseBufInfo);
-		VkImageViewCreateInfo divInfo2 = nvvk::makeImageViewCreateInfo(denoiseDirImageB.image, denoiseBufInfo);
-		VkImageViewCreateInfo divInfo3 = nvvk::makeImageViewCreateInfo(denoiseDirImageC.image, denoiseBufInfo);
-		VkImageViewCreateInfo divInfo4 = nvvk::makeImageViewCreateInfo(denoiseDirImageD.image, denoiseBufInfo);
-
-		m_denoiseTempBuf[0] = m_pAlloc->createTexture(denoiseDirImageA, divInfo1);
-		m_denoiseTempBuf[1] = m_pAlloc->createTexture(denoiseDirImageB, divInfo2);
-		m_denoiseTempBuf[2] = m_pAlloc->createTexture(denoiseDirImageC, divInfo3);
-		m_denoiseTempBuf[3] = m_pAlloc->createTexture(denoiseDirImageD, divInfo4);
-		m_denoiseTempBuf[0].descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-		m_denoiseTempBuf[1].descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-		m_denoiseTempBuf[2].descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-		m_denoiseTempBuf[3].descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 	}
 
 	// Setting the image layout for both color and depth
@@ -283,10 +211,6 @@ void RayQuery::createImage()
 		nvvk::cmdBarrierImageLayout(cmdBuf, m_gbuffer[0].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 		nvvk::cmdBarrierImageLayout(cmdBuf, m_gbuffer[1].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 		nvvk::cmdBarrierImageLayout(cmdBuf, m_motionVector.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-		nvvk::cmdBarrierImageLayout(cmdBuf, m_denoiseTempBuf[0].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-		nvvk::cmdBarrierImageLayout(cmdBuf, m_denoiseTempBuf[1].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-		nvvk::cmdBarrierImageLayout(cmdBuf, m_denoiseTempBuf[2].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-		nvvk::cmdBarrierImageLayout(cmdBuf, m_denoiseTempBuf[3].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
 		genCmdBuf.submitAndWait(cmdBuf);
 	}
@@ -312,11 +236,6 @@ void RayQuery::createDescriptorSet()
 
 	m_bind.addBinding({ RayQBindings::eMotionVector, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, flag });
 
-	m_bind.addBinding({ RayQBindings::eDenoiseDirTempA, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, flag });
-	m_bind.addBinding({ RayQBindings::eDenoiseDirTempB, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, flag });
-	m_bind.addBinding({ RayQBindings::eDenoiseIndTempA, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, flag });
-	m_bind.addBinding({ RayQBindings::eDenoiseIndTempB, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, flag });
-
 	m_descPool = m_bind.createPool(m_device, m_descSet.size());
 	CREATE_NAMED_VK(m_descSetLayout, m_bind.createLayout(m_device));
 	CREATE_NAMED_VK(m_descSet[0], nvvk::allocateDescriptorSet(m_device, m_descPool, m_descSetLayout));
@@ -327,9 +246,9 @@ void RayQuery::createDescriptorSet()
 
 void RayQuery::updateDescriptorSet()
 {
-	std::array<VkWriteDescriptorSet, 13> writes;
+	std::array<VkWriteDescriptorSet, 9> writes;
 	VkDeviceSize directResvSize = m_size.width * m_size.height * sizeof(DirectReservoir);
-	VkDeviceSize indirectResvSize = (m_size.width / 2) * (m_size.height / 2) * sizeof(IndirectReservoir);
+	VkDeviceSize indirectResvSize = (m_size.width) * (m_size.height) * sizeof(IndirectReservoir);
 
 	for (int i = 0; i < 2; i++) {
 		VkDescriptorBufferInfo lastDirectResvBufInfo = { m_directReservoir[i].buffer, 0, directResvSize };
@@ -352,11 +271,6 @@ void RayQuery::updateDescriptorSet()
 		writes[7] = m_bind.makeWrite(m_descSet[i], RayQBindings::eTempIndirectResv, &tempIndirectResvBufInfo);
 
 		writes[8] = m_bind.makeWrite(m_descSet[i], RayQBindings::eMotionVector, &m_motionVector.descriptor);
-
-		writes[9] = m_bind.makeWrite(m_descSet[i], RayQBindings::eDenoiseDirTempA, &m_denoiseTempBuf[0].descriptor);
-		writes[10] = m_bind.makeWrite(m_descSet[i], RayQBindings::eDenoiseDirTempB, &m_denoiseTempBuf[1].descriptor);
-		writes[11] = m_bind.makeWrite(m_descSet[i], RayQBindings::eDenoiseIndTempA, &m_denoiseTempBuf[2].descriptor);
-		writes[12] = m_bind.makeWrite(m_descSet[i], RayQBindings::eDenoiseIndTempB, &m_denoiseTempBuf[3].descriptor);
 
 		vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 	}

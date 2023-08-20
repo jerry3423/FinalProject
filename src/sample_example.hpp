@@ -176,17 +176,6 @@ public:
 
       3,       // ReSTIRState
       20,      // clamp
-
-      0,       // Enable denoise
-      0,       // Default denoise level
-
-      0.4f,
-      0.1f,
-      0.02f,
-
-      4.f,
-      0.4f,
-      1.f,
   };
 
   SunAndSky m_sunAndSky{

@@ -66,13 +66,9 @@ private:
   uint32_t                 m_queueIndex{0};
 
   std::array<nvvk::Texture, 2> m_gbuffer;
-  std::array<nvvk::Texture, 4> m_denoiseTempBuf;
 
   std::array<nvvk::Buffer, 2> m_directReservoir;
   std::array<nvvk::Buffer, 2> m_indirectReservoir;
-
-  nvvk::Image m_directOutput;
-  nvvk::Image m_indirectOutput;
 
   nvvk::Buffer m_directTempResv;
   nvvk::Buffer m_indirectTempResv;
@@ -89,9 +85,6 @@ private:
 
   VkPipeline m_directPipeline{ VK_NULL_HANDLE };
   VkPipeline m_indirectPipeline{ VK_NULL_HANDLE };
-  VkPipeline m_denoiseDirectPipeline{ VK_NULL_HANDLE };
-  VkPipeline m_denoiseIndirectPipeline{ VK_NULL_HANDLE };
-  VkPipeline m_composePipeline{ VK_NULL_HANDLE };
 
   nvvk::DescriptorSetBindings m_bind;
   VkDescriptorPool      m_descPool{ VK_NULL_HANDLE };

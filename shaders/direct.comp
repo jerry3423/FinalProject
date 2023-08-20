@@ -120,7 +120,6 @@ vec3 directReSTIR(Ray r)
   
     vec3 radiance = vec3(0.0);
     vec3 throughput = vec3(1.0);
-    vec3 absorption = vec3(0.0);
   
     ClosestHit(r);
 
@@ -147,15 +146,6 @@ vec3 directReSTIR(Ray r)
     // Filling material structures
     GetMaterialsAndTextures(state, r);
 
-    // Reset absorption when ray is going out of surface
-    if(dot(state.normal, state.ffnormal) > 0.0)
-    {
-        absorption = vec3(0.0);
-    }
-
-    // Add absoption
-    throughput *= exp(-absorption * prd.hitT);
-
     // Get pixel index from last frame
     ivec2 motionIdx = createMotionIndex(state.position);
     uvec4 gInfo = encodeGeometryInfo(state, prd.hitT);
@@ -165,6 +155,9 @@ vec3 directReSTIR(Ray r)
 
     // Emissive material
     radiance += state.mat.emission * throughput;
+
+    vec3 albedo = state.mat.albedo;
+    state.mat.albedo = vec3(1.0);
 
     if (rtxState.ReSTIRState == eNone) {
         LightSample lsample;
@@ -266,6 +259,7 @@ vec3 directReSTIR(Ray r)
     }
     radiance = RemoveFF(radiance);
     radiance = HDRToLDR(radiance);
+    radiance *= albedo;
     return radiance;
 }
  
@@ -290,21 +284,16 @@ void main() {
   }
   pixelColor /= rtxState.maxSamples;
 
-  if(rtxState.denoise == 1){
-    imageStore(DirectResultImage, imageCoords, vec4(pixelColor, 1));
+  if(rtxState.frame > 0)
+  {
+    // Do accumulation over time
+    vec3 old_color  = imageLoad(DirectResultImage, imageCoords).xyz;
+    vec3 new_result = mix(old_color, pixelColor, 1.0f / float(rtxState.frame + 1));
+    imageStore(DirectResultImage, imageCoords, vec4(new_result, 1.f));
   }
-  else{
-    if(rtxState.frame > 0)
-      {
-        // Do accumulation over time
-        vec3 old_color  = imageLoad(DirectResultImage, imageCoords).xyz;
-        vec3 new_result = mix(old_color, pixelColor, 1.0f / float(rtxState.frame + 1));
-        imageStore(DirectResultImage, imageCoords, vec4(new_result, 1.f));
-      }
-      else
-      {
-        // First frame, replace the value in the buffer
-        imageStore(DirectResultImage, imageCoords, vec4(pixelColor, 1.f));
-      }
+  else
+  {
+    // First frame, replace the value in the buffer
+    imageStore(DirectResultImage, imageCoords, vec4(pixelColor, 1.f));
   }
 }

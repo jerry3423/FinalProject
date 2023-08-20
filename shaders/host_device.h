@@ -61,8 +61,7 @@ S_OUT   = 1,  // Offscreen output image
 S_SCENE = 2,  // Scene data
 S_ENV   = 3,  // Environment / Sun & Sky
 S_RTX   = 4,
-S_WF    = 5,  // Wavefront extra data
-S_Denoise = 6
+S_WF    = 5  // Wavefront extra data
 END_ENUM();
 
 // Acceleration Structure - Set 0
@@ -105,11 +104,7 @@ eTempDirectResv = 4,
 eLastIndirectResv = 5,
 eThisIndirectResv = 6,
 eTempIndirectResv = 7,
-eMotionVector = 8,
-eDenoiseDirTempA = 9,
-eDenoiseDirTempB = 10,
-eDenoiseIndTempA = 11,
-eDenoiseIndTempB = 12
+eMotionVector = 8
 END_ENUM();
 
 START_ENUM(DebugMode)
@@ -243,17 +238,6 @@ struct RtxState
 
   int ReSTIRState;              // Different part of ReSTIR
   int reservoirClamp;
-
-  int denoise;                  // Enable Denoiser
-  int denoiseLevel;             // Default denoise level
-
-  float sigLuminDirect;
-  float sigNormalDirect;
-  float sigDepthDirect;
-
-  float sigLuminIndirect;
-  float sigNormalIndirect;
-  float sigDepthIndirect;
 };
 
 // Structure used for retrieving the primitive information in the closest hit

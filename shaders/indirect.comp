@@ -34,7 +34,7 @@ layout(local_size_x = BlockSizeX, local_size_y = BlockSizeY) in;
 const bool multiBounce = true;
 
 ivec2 indSize() {
-    return rtxState.size / 2;
+    return rtxState.size;
 }
 
 bool findTemporalNeighbor(vec3 norm, float reprojDepth, uint matId, ivec2 lastCoord, inout IndirectReservoir resv) {
@@ -43,7 +43,7 @@ bool findTemporalNeighbor(vec3 norm, float reprojDepth, uint matId, ivec2 lastCo
     uint matHash;
     
     loadLastGeometryInfo(lastCoord, pnorm, pdepth, matHash);
-    ivec2 coord = lastCoord / 2;
+    ivec2 coord = lastCoord;
     
     if (inBound(coord, indSize())) {
         if (hash8bit(matId) == matHash) {
@@ -65,7 +65,7 @@ bool findSpatialNeighbor(vec3 norm, float depth, uint matId, out IndirectReservo
     float pdepth;
 
     loadThisGeometryInfo(imageCoords, pnorm, pdepth);
-    ivec2 coord = imageCoords / 2;
+    ivec2 coord = imageCoords;
     bool diff = false;
     if (inBound(coord, indSize())) {
         return false;
@@ -114,10 +114,11 @@ void cacheTempReservoir(IndirectReservoir resv) {
 void indirectLight(Ray r,out float primSamplePdf, out vec3 primWo, out State primState, out GISample giSample)
 {
     vec3 throughput = vec3(1.0);
+    vec3 absorption = vec3(0.0);
     giSample = newGISample();
     primWo = -r.direction;
 
-    for(int depth = 0; depth < 2; depth++)
+    for(int depth = 0; depth <= rtxState.maxDepth; depth++)
     {
         ClosestHit(r);
 
@@ -133,6 +134,11 @@ void indirectLight(Ray r,out float primSamplePdf, out vec3 primWo, out State pri
         // Filling material structures
         GetMaterialsAndTextures(state, r);
 
+        // Reset absorption when ray is going out of surface
+        if(dot(state.normal, state.ffnormal) > 0.0)
+        {
+          absorption = vec3(0.0);
+        }
 
         if (state.isEmitter) {
             giSample.xs = state.position;
@@ -140,37 +146,46 @@ void indirectLight(Ray r,out float primSamplePdf, out vec3 primWo, out State pri
             giSample.L += throughput * state.mat.emission;
             break;
         }
+
+
+        // Calculate indirect light
+        VisibilityContribution a = DirectLight(r, state);
+        a.radiance *= throughput;
+
+        // Add absoption (transmission / volume)
+        throughput *= exp(-absorption * prd.hitT);
+
+        // Sampling for the next ray
+        bsdfSampleRec.f = Sample(state, -r.direction, state.ffnormal, bsdfSampleRec.L, bsdfSampleRec.pdf, prd.seed);
+
+        // Set absorption only if the ray is currently inside the object.
+        if(dot(state.ffnormal, bsdfSampleRec.L) < 0.0)
+        {
+            absorption = -log(state.mat.attenuationColor) / vec3(state.mat.attenuationDistance);
+        }
+
+        if(!IsPdfInvalid(bsdfSampleRec.pdf))
+        {
+            throughput *= bsdfSampleRec.f * abs(dot(state.ffnormal, bsdfSampleRec.L)) / bsdfSampleRec.pdf;
+        }
+        else
+        {
+            break;
+        }
+
         if(depth == 0)
         {
             primState = state;
-            // Sampling for the next ray
-            bsdfSampleRec.f = Sample(state, -r.direction, state.ffnormal, bsdfSampleRec.L, bsdfSampleRec.pdf, prd.seed);
-
-
-            if(bsdfSampleRec.pdf > 0.0)
-            {
-                throughput *= bsdfSampleRec.f * abs(dot(state.ffnormal, bsdfSampleRec.L)) / bsdfSampleRec.pdf;
-            }
-            else
-            {
-                break;
-            }
-
             primSamplePdf = bsdfSampleRec.pdf;
             giSample.xv = state.position;
             giSample.nv = state.ffnormal;
         }
         else{
-            if(depth == 1)
+            if(depth == 2)
             {
-                //primSamplePdf = bsdfSampleRec.pdf;
                 giSample.xs = state.position;
                 giSample.ns = state.ffnormal;
             }
-
-            // Calculate indirect light
-            VisibilityContribution a = DirectLight(r, state);
-            a.radiance *= throughput;
 
             Ray shadowRay;
             shadowRay.origin = OffsetRay(state.position, state.ffnormal);
@@ -191,7 +206,6 @@ void indirectLight(Ray r,out float primSamplePdf, out vec3 primWo, out State pri
         r.direction = bsdfSampleRec.L;
         r.origin = OffsetRay(state.position, state.ffnormal);
 
-
         #ifdef RR
         if(rand(prd.seed) >= rrPcont)
             break;                // paths with low throughput that won't contribute
@@ -209,7 +223,7 @@ vec3 indirectReSTIR( float primSamplePdf, vec3 primWo, State primState, GISample
     // temporal reuse
     if (rtxState.ReSTIRState == eTemporal || rtxState.ReSTIRState == eSpatiotemporal) {
         float reprojDepth = length(sceneCamera.lastPosition - primState.position);
-        ivec2 motionIdx = imageLoad(motionVector, imageCoords * 2).xy;
+        ivec2 motionIdx = imageLoad(motionVector, imageCoords).xy;
         findTemporalNeighbor(primState.ffnormal, reprojDepth, primState.matID, motionIdx, resv);
     }
 
@@ -224,13 +238,12 @@ vec3 indirectReSTIR( float primSamplePdf, vec3 primWo, State primState, GISample
     resvUpdate(resv, giSample, sampleWeight, rand(prd.seed));
 
     resvCheckValidity(resv);
-    resvClamp(resv, rtxState.reservoirClamp * 2);
+    resvClamp(resv, rtxState.reservoirClamp);
     saveNewReservoir(resv);
 
    
     giSample = resv.giSample;
     if (!resvInvalid(resv) && GISampleValid(giSample)) {
-        vec3 primWi = normalize(giSample.xs - giSample.xv);
         indirect = giSample.L * resv.weight / (resvToScalar(giSample.L) * float(resv.num));
     }
 
@@ -262,23 +275,18 @@ void main() {
 
   indirectLight(ray, primSamplePdf, primWo, primState, giSample);
   vec3 pixelColor = indirectReSTIR(primSamplePdf, primWo, primState, giSample);
-  if(rtxState.denoise == 1){
-    imageStore(denoiseIndTempA, imageCoords, vec4(pixelColor, 1));
+  // Accumulation
+  if(rtxState.frame > 0)
+  {
+      // Do accumulation over time
+      vec3 old_color  = imageLoad(IndirectResultImage, imageCoords).xyz;
+      vec3 new_result = mix(old_color, pixelColor, 1.0f / float(rtxState.frame + 1));
+      imageStore(IndirectResultImage, imageCoords, vec4(new_result, 1.f));
   }
-  else{
-    // Accumulation
-    if(rtxState.frame > 0)
-      {
-        // Do accumulation over time
-        vec3 old_color  = imageLoad(denoiseIndTempA, imageCoords).xyz;
-        vec3 new_result = mix(old_color, pixelColor, 1.0f / float(rtxState.frame + 1));
-        imageStore(denoiseIndTempA, imageCoords, vec4(new_result, 1.f));
-      }
-      else
-      {
-        // First frame, replace the value in the buffer
-        imageStore(denoiseIndTempA, imageCoords, vec4(pixelColor, 1.f));
-      }
+  else
+  {
+      // First frame, replace the value in the buffer
+      imageStore(IndirectResultImage, imageCoords, vec4(pixelColor, 1.f));
   }
   //imageStore(denoiseIndTempA, imageCoords, vec4(pixelColor, 1.f));
 }

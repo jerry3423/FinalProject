@@ -185,10 +185,6 @@ bool SampleGUI::guiRayTracing()
 
   changed |= GuiH::Slider("Reservoir Clamp", "", &rtxState.reservoirClamp, nullptr, Normal, 1, 1000);
 
-  bool denoise = rtxState.denoise;
-  changed |= GuiH::Checkbox("Denoiser", "", &denoise);
-  rtxState.denoise = denoise;
-
   GuiH::Info("Frame", "", std::to_string(rtxState.frame), GuiH::Flags::Disabled);
   return changed;
 }
